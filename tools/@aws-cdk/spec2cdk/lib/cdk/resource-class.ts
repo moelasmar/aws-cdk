@@ -34,7 +34,7 @@ import {
   propStructNameFromResource,
   staticRequiredTransform,
 } from '../naming';
-import { splitDocumentation } from '../util';
+import { splitDocumentation, log } from '../util';
 
 export interface ITypeHost {
   typeFromSpecType(type: PropertyType): Type;
@@ -145,12 +145,35 @@ export class ResourceClass extends ClassType {
     this.makeInspectMethod();
     this.makeCfnProperties();
     this.makeRenderProperties();
+    log.info('Generating hello world method');
+    this.makeHelloMethod();
 
     // Make converter functions for the props type
     cfnMapping.makeCfnProducer(this.module, this.propsType);
     cfnMapping.makeCfnParser(this.module, this.propsType);
 
     this.makeMustRenderStructs();
+  }
+
+  private makeHelloMethod() {
+    const factory = this.addMethod({
+      name: 'helloWorld',
+      static: false,
+      returnType: Type.VOID,
+      docs: {
+        summary: 'hello world',
+        remarks: '',
+      },
+    });
+
+    log.info('Generating hello world method');
+
+    factory.addParameter({ name: 'name', type: Type.STRING });
+    const print = expr.directCode('console.log(name);');
+
+    factory.addBody(
+      stmt.expr(print),
+    );
   }
 
   private makeFromCloudFormationFactory() {
