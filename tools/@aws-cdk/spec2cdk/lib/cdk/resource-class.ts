@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from 'fs';
 import { PropertyType, Resource, SpecDatabase } from '@aws-cdk/service-spec-types';
 import {
   $E,
@@ -34,6 +35,7 @@ import {
   propStructNameFromResource,
   staticRequiredTransform,
 } from '../naming';
+import { propertyNameFromCloudFormation } from '../naming/conventions';
 import { splitDocumentation, log } from '../util';
 
 export interface ITypeHost {
@@ -145,7 +147,7 @@ export class ResourceClass extends ClassType {
     this.makeInspectMethod();
     this.makeCfnProperties();
     this.makeRenderProperties();
-    log.info('Generating hello world method');
+    //log.info('Generating hello world method');
     this.makeHelloMethod();
 
     // Make converter functions for the props type
@@ -155,25 +157,79 @@ export class ResourceClass extends ClassType {
     this.makeMustRenderStructs();
   }
 
+  private replaceAll(s: string, search: string, replace: string) {
+    return s.split(search).join(replace);
+  }
+
+  public typeFromSpecType(type: PropertyType): Type {
+    switch (type?.type) {
+      case 'string':
+        return Type.STRING;
+      case 'number':
+      case 'integer':
+        return Type.NUMBER;
+      case 'boolean':
+        return Type.BOOLEAN;
+      case 'date-time':
+        return Type.DATE_TIME;
+      case 'array':
+        return Type.arrayOf(this.typeFromSpecType(type.element));
+      case 'map':
+        return Type.mapOf(this.typeFromSpecType(type.element));
+      case 'tag':
+        return CDK_CORE.CfnTag;
+      case 'union':
+        return Type.unionOf(...type.types.map((t) => this.typeFromSpecType(t)));
+      case 'null':
+        return Type.UNDEFINED;
+      case 'tag':
+        return CDK_CORE.CfnTag;
+      case 'json':
+        return Type.ANY;
+    }
+    return Type.ANY;
+  }
+
   private makeHelloMethod() {
-    const factory = this.addMethod({
-      name: 'helloWorld',
-      static: false,
-      returnType: Type.VOID,
-      docs: {
-        summary: 'hello world',
-        remarks: '',
-      },
-    });
+    const resourceType = this.replaceAll(this.resource.cloudFormationType, '::', '_') + '.json';
+    const filePath = '../../../../../Hackathon/src/MaxHackathonEncryptionCDK15/encryption_traits/' + resourceType;
+    if (!existsSync(filePath)) {
+      return;
+    }
 
-    log.info('Generating hello world method');
+    const rawData = readFileSync(filePath, 'utf8');
+    const encryptionMethods = JSON.parse(rawData);
+    for (const method of encryptionMethods) {
+      log.info(method);
+      const factory = this.addMethod({
+        name: propertyNameFromCloudFormation(method.name),
+        static: false,
+        returnType: Type.VOID,
+        docs: {
+          summary: propertyNameFromCloudFormation(method.name),
+          remarks: '',
+        },
+      });
+      for (const parameter of method.input_parameters) {
+        const parametersVars = {};
+        if (parameter.type.startsWith('AWS::')) {
+          const whatever = asString();
+      
+          parametersVars[whatever] = factory.addParameter({ name: propertyNameFromCloudFormation(parameter.name), type: Type.ANY });
+        } else {
+          factory.addParameter({ name: propertyNameFromCloudFormation(parameter.name), type: this.typeFromSpecType( parameter.type ) });
+        }
+      }
 
-    factory.addParameter({ name: 'name', type: Type.STRING });
-    const print = expr.directCode('console.log(name);');
+      const keys = Object.keys(method.body);
 
-    factory.addBody(
-      stmt.expr(print),
-    );
+      keys.forEach( key => {
+        factory.addBody(
+          stmt.assign($this[key], expr.lit ({ [key]: 'wha' } ) ),
+        );
+      });
+    }
+    // log.info('Generating hello world method');
   }
 
   private makeFromCloudFormationFactory() {
@@ -211,6 +267,7 @@ export class ResourceClass extends ClassType {
 
     factory.addBody(
       stmt.assign(resourceAttributes, new TruthyOr(resourceAttributes, expr.lit({}))),
+      code.comment('TruthOr is before this'),
       stmt.constVar(resourceProperties, options.parser.parseValue(resourceAttributes.Properties)),
       stmt.constVar(propsResult, reverseMapper.call(resourceProperties)),
       stmt
@@ -363,7 +420,9 @@ export class ResourceClass extends ClassType {
       name: 'props',
       type: Type.mapOf(Type.ANY),
     });
-    m.addBody(stmt.ret($E(expr.ident(cfnProducerNameFromType(this.propsType)))(props)));
+    m.addBody(
+      stmt.ret($E(expr.ident(cfnProducerNameFromType(this.propsType)))(props)),
+    );
   }
 
   /**
